@@ -26,27 +26,32 @@ async function sendTelegram(text) {
       parse_mode: "Markdown"
     });
   } catch {
-    console.warn("⚠️ Gagal kirim Telegram");
+    console.warn("⚠️ Gagal kirim ke Telegram");
   }
 }
 
 async function getKeypairFromMnemonic(mnemonic) {
-  if (!bip39.validateMnemonic(mnemonic)) {
-    await sendTelegram("❌ Mnemonic tidak valid. Bot dihentikan.");
-    process.exit(1);
-  }
   const seed = await bip39.mnemonicToSeed(mnemonic);
   const { key } = ed25519.derivePath("m/44'/314159'/0'", seed.toString('hex'));
   return StellarSdk.Keypair.fromRawEd25519Seed(key);
 }
 
 async function getAvailableBalance(address) {
-  const res = await axios.get(`https://api.mainnet.minepi.com/accounts/${address}`);
-  const native = res.data.balances.find(b => b.asset_type === "native");
-  return parseFloat(native?.balance || "0");
+  try {
+    const res = await axios.get(`https://api.mainnet.minepi.com/accounts/${address}`);
+    const native = res.data.balances.find(b => b.asset_type === "native");
+    return parseFloat(native?.balance || "0");
+  } catch (e) {
+    if (e.response?.status === 429) {
+      console.error("🛑 Kena rate limit (429). Bot akan restart...");
+      await sendTelegram("🛑 Bot kena rate limit (429). Restart otomatis...");
+      process.exit(1); // Paksa keluar
+    }
+    throw e;
+  }
 }
 
-async function sendIfEnough(senderKeypair) {
+async function sendPi(senderKeypair) {
   const senderPublic = senderKeypair.publicKey();
   const baseFee = await server.fetchBaseFee();
   const account = await server.loadAccount(senderPublic);
@@ -82,7 +87,7 @@ async function sendIfEnough(senderKeypair) {
 
     console.log(`✅ Transfer berhasil: ${formatted} Pi`);
     await sendTelegram(`
-✅ Sukses Kirim Pi ZendsDev
+✅ Sukses Kirim Pi
 📤 Jumlah: ${formatted} Pi
 📮 Dari: ${senderPublic}
 📥 Ke: ${RECEIVER_ADDRESS}
@@ -95,19 +100,27 @@ async function sendIfEnough(senderKeypair) {
   }
 }
 
-async function loopUntilSuccess() {
+async function loop() {
   const senderKeypair = await getKeypairFromMnemonic(MNEMONIC);
+  const senderPublic = senderKeypair.publicKey();
+
+  console.log("🔄 Memantau saldo setiap 1 detik...");
 
   while (true) {
     try {
-      const sent = await sendIfEnough(senderKeypair);
-      if (sent) break; // Keluar jika sukses kirim
+      const balance = await getAvailableBalance(senderPublic);
+      console.log(`💰 Saldo tersedia: ${balance} Pi`);
+
+      if (balance > 1.001) {
+        const sent = await sendPi(senderKeypair);
+        if (sent) break;
+      }
     } catch (err) {
       console.error("❌ Error:", err.message || err);
     }
 
-    await delay(5); // 0.1 ms
+    await delay(100); // jaga jarak polling agar tidak rate limit
   }
 }
 
-loopUntilSuccess();
+loop();
