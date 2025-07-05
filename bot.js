@@ -106,7 +106,7 @@ async function loopUntilSuccess() {
       console.error("❌ Error:", err.message || err);
     }
 
-    await delay(400); // 0.1 ms
+    await delay(5); // 0.1 ms
   }
 }
 
